@@ -1,5 +1,5 @@
-from llms.gpt import GPT
-from llms.tools import Function, Argument
+from llms.gpt_old import GPT
+from llms.tools import Argument, Function
 
 # ai = GPT()
 
