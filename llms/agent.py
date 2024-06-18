@@ -122,6 +122,7 @@ class Agent(ABC):
         max_tokens: int = 512,
         temperature: Optional[float] = None,
         max_depth: Optional[int] = None,
+        function_outputs: List[Tuple[str, Dict[str, Any], Any]] = [],
     ) -> Any:
         """
         Respond triggers the incoming prompt.
@@ -131,19 +132,30 @@ class Agent(ABC):
 
         { "role": "system", "content": prompt }
 
-        The max depth, if not set, will allow the tools to be called endlessly.
+        The max depth, if not set, will allow the functions to be called
+        endlessly.
 
-        When respond is called, we will check for any calls to available tools.
-        If tool calls are within the generated response (however that may be
-        handled), then we will call each tool, generate a new input, and then
-        call the LLM again. If the max depth is surpassed doing this cycle, we
-        will raise a MaxDepthError.
+        When respond is called, we will check for any calls to available
+        functions. If function calls are within the generated response (however
+        that may be handled), then we will call each function, compile the
+        generated output for each function, and then call the LLM again with
+        the `function_outputs` populated. The `function_outputs` is a list of
+        function outputs in Tuple form. Each Tuple is of the format str (the
+        function name), the parameters passed to that function, and the
+        resulting output of that function, whatever it may be. If the max depth
+        is surpassed doing this cycle, we will raise a MaxDepthError.
+
+        This is then passed to the agent in some manner based on what the agent
+        expects.
+
+        This function is recursively called until no more function calls are
+        requested, and the resulting output is passed back.
         """
         if max_depth is not None and max_depth <= 0:
             raise MaxDepthError(max_depth)
 
         response, function_calls = self._llm.generate(
-            prompt, max_tokens, temperature, self._functions
+            prompt, max_tokens, temperature, self._functions, function_outputs
         )
         print("!!!", response, function_calls)
 
@@ -162,6 +174,95 @@ class Agent(ABC):
                 temperature,
                 max_depth - 1 if max_depth else None,
             )
+
+
+class SequentialAgent(ABC):
+    """
+    SequentialAgent will sequentially pass the prompt to a series of agents,
+    feeding responses into the next agent.
+
+    You are expected to implement this class's
+    """
+
+    def __init__(
+        self,
+        agents: List[Agent],
+    ):
+        self.agents = agents
+
+    @abstractmethod
+    def parse_response(
+        self, index: int, response: Any
+    ) -> Tuple[Union[str, dict], Dict[str, Dict[str, Any]]]:
+        """
+        parse_response will take the response from the agent at the given index
+        and expects to be parsed and prepared for the next agent. It should
+        return the response and any function calls that need to be made in the
+        next agent.
+        """
+        pass
+
+    def __call__(
+        self,
+        prompt: Union[str, dict],
+        max_tokens: int = 512,
+        temperature: Optional[float] = None,
+        max_depth: Optional[int] = None,
+        function_outputs: List[Tuple[str, Dict[str, Any], Any]] = [],
+    ) -> Any:
+
+        for agent in self.agents:
+            response = agent(
+                prompt, max_tokens, temperature, max_depth, function_outputs
+            )
+            prompt, function_outputs = self.parse_response(response)
+
+
+class ParallelAgent(ABC):
+    """
+    ParallelAgent will pass the prompt to a series of agents in parallel, and
+    then return each agent's response.
+    """
+
+    def __init__(
+        self,
+        agents: Dict[str, Agent],
+        max_workers: int = 5,
+        timeout: float = 60.0,
+    ):
+        if len(agents) == 0:
+            raise ValueError("Agents must be provided")
+
+        self.agents = agents
+        self.__thread_pool = ThreadPoolExecutor(max_workers=len(agents))
+        self.__timeout = timeout
+
+    def __call__(
+        self,
+        prompt: Union[str, dict],
+        max_tokens: int = 512,
+        temperature: Optional[float] = None,
+        max_depth: Optional[int] = None,
+    ) -> Any:
+        futures: Dict[str, Future] = []
+        for agent_name, agent in self.agents.items():
+            futures[agent_name] = self.__thread_pool.submit(
+                agent,
+                prompt,
+                max_tokens,
+                temperature,
+                max_depth,
+            )
+
+        wait(futures.values(), timeout=self.__timeout)
+
+        responses = {}
+        for agent_name, future in futures.items():
+            if future.exception():
+                raise future.exception()
+            responses[agent_name] = future.result()
+
+        return prompt
 
 
 class MaxDepthError(Exception):
