@@ -222,16 +222,22 @@ class ParallelAgent(ABC):
     """
     ParallelAgent will pass the prompt to a series of agents in parallel, and
     then return each agent's response.
+
+    If a dict of agents is passed, the response will be a dict of agent names
+    and their resulting outputs. If a list is passed, the response will be a
+    list of outputs in the order the agents were passed.
     """
 
     def __init__(
         self,
-        agents: Dict[str, Agent],
+        agents: Union[Dict[str, Agent], List[Agent]],
         max_workers: int = 5,
         timeout: float = 60.0,
     ):
         if len(agents) == 0:
             raise ValueError("Agents must be provided")
+
+        self.__type = "list" if isinstance(agents, list) else "dict"
 
         self.agents = agents
         self.__thread_pool = ThreadPoolExecutor(max_workers=len(agents))
@@ -243,26 +249,49 @@ class ParallelAgent(ABC):
         max_tokens: int = 512,
         temperature: Optional[float] = None,
         max_depth: Optional[int] = None,
-    ) -> Any:
-        futures: Dict[str, Future] = []
-        for agent_name, agent in self.agents.items():
-            futures[agent_name] = self.__thread_pool.submit(
-                agent,
-                prompt,
-                max_tokens,
-                temperature,
-                max_depth,
-            )
+    ) -> Union[Dict[str, Any], List[Any]]:
+        if self.__type == "list":
+            responses = []
 
-        wait(futures.values(), timeout=self.__timeout)
+            futures: List[Future] = []
+            for agent in self.agents:
+                futures.append(
+                    self.__thread_pool.submit(
+                        agent,
+                        prompt,
+                        max_tokens,
+                        temperature,
+                        max_depth,
+                    )
+                )
+            wait(futures, timeout=self.__timeout)
 
-        responses = {}
-        for agent_name, future in futures.items():
-            if future.exception():
-                raise future.exception()
-            responses[agent_name] = future.result()
+            responses = []
+            for future in futures:
+                if future.exception():
+                    raise future.exception()
+                responses.append(future.result())
 
-        return prompt
+        else:
+            futures: Dict[str, Future] = {}
+            for agent_name, agent in self.agents.items():
+                futures[agent_name] = self.__thread_pool.submit(
+                    agent,
+                    prompt,
+                    max_tokens,
+                    temperature,
+                    max_depth,
+                )
+
+            wait(futures.values(), timeout=self.__timeout)
+
+            responses = {}
+            for agent_name, future in futures.items():
+                if future.exception():
+                    raise future.exception()
+                responses[agent_name] = future.result()
+
+        return responses
 
 
 class MaxDepthError(Exception):
