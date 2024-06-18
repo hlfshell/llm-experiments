@@ -1,14 +1,12 @@
-import openai
-import os
 import json
-
-from openai.types.chat.chat_completion_message_tool_call import (
-    ChatCompletionMessageToolCall,
-)
-
+import os
 from typing import Dict, List, Optional, Union
 
-from llms.tools import Function, Argument
+import openai
+from openai.types.chat.chat_completion_message_tool_call import \
+    ChatCompletionMessageToolCall
+
+from llms.tools import Argument, Function
 
 
 class GPT:

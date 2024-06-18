@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from concurrent.futures import Future, ThreadPoolExecutor, wait
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from llms.tools import Function
 
@@ -20,9 +20,11 @@ class LLM(ABC):
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         functions: List[Function] = [],
-    ) -> str:
+    ) -> Tuple[str, Dict[str, Dict[str, Any]]]:
         """
-        Generate a response from the LLM given a prompt.
+        Generate a response from the LLM given a prompt. It returns a tuple -
+        first the string output of the generated prompt (if any), and a set of
+        function calls from the LLM.
 
         The prompt can be a str or a list of dicts, both of which are common for
         LLM applications. It is up to the implementer to properly deal/convert
@@ -36,16 +38,6 @@ class LLM(ABC):
         of functions - it is up to the implemented LLM class to incorporate
         these for the target LLM (templating into the prompt, specific
         instruction, etc).
-        """
-        pass
-
-    @abstractmethod
-    def parse_function_calls(self, Any) -> Dict[str, Dict[str, Any]]:
-        """
-        Given a response from an LLM - be it a dict, object, or str,
-        extract all function calls from it and return all, if any,
-        function calls in the form of a dict - [function name, args
-        dict]
         """
         pass
 
@@ -150,11 +142,11 @@ class Agent(ABC):
         if max_depth is not None and max_depth <= 0:
             raise MaxDepthError(max_depth)
 
-        response = self._llm.generate(
+        response, function_calls = self._llm.generate(
             prompt, max_tokens, temperature, self._functions
         )
+        print("!!!", response, function_calls)
 
-        function_calls = self._llm.parse_function_calls(response)
         if function_calls is None or len(function_calls) == 0:
             return self.parse_response(response)
         else:

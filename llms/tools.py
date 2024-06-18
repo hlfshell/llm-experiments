@@ -1,11 +1,10 @@
 from __future__ import annotations
-from typing import Any, Callable, Dict, List, Union
-
-from openai.types.chat.chat_completion_message_tool_call import (
-    ChatCompletionMessageToolCall,
-)
 
 from abc import ABC, abstractmethod
+from typing import Any, Callable, Dict, List, Union
+
+from openai.types.chat.chat_completion_message_tool_call import \
+    ChatCompletionMessageToolCall
 
 
 class Parser(ABC):
