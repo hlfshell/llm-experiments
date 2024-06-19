@@ -6,6 +6,27 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from llms.tools import Function
 
+# A RolePrompt is a dict specifying a role, and a string specifying the
+# content. An example of this would be:
+# { "role": "system", "content": "You are a an assistant AI whom should answer
+# all questions in a straightforward manner" }
+# { "role": "user", "content": "How much wood could a woodchuck chuck..." }
+RolePrompt = Dict[str, str]
+
+# Prompt is a union type - either a straight string, or a RolePrompt.
+Prompt = Union[str, RolePrompt]
+
+# FunctionArguments are a dict of the arguments passed to a function, with the
+# key being the argument name and the value being the argument value.
+FunctionArguments = Dict[str, Any]
+
+# FunctionCalls are a type representing a set of of possible function calls and
+# their results, representing a history of queries from an LLM to their
+# functions. The format is a list of tuples; each tuple represents the name of
+# the function, a FunctionArguments, and finally the return result of that
+# function (type dependent on the function).
+FunctionCalls = List[Tuple[str, FunctionArguments, Any]]
+
 
 class LLM(ABC):
     def __init__(self, max_tokens: int = 512, temperature: float = 0.7):
@@ -16,11 +37,11 @@ class LLM(ABC):
     @abstractmethod
     def generate(
         self,
-        prompt: Union[str, List[dict]],
+        prompt: Prompt,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
         functions: List[Function] = [],
-    ) -> Tuple[str, Dict[str, Dict[str, Any]]]:
+    ) -> Tuple[str, Dict[str, FunctionArguments]]:
         """
         Generate a response from the LLM given a prompt. It returns a tuple -
         first the string output of the generated prompt (if any), and a set of
@@ -50,6 +71,7 @@ class Agent(ABC):
         functions: Dict[str, Function],
         max_function_threads: int = 5,
         default_function_timeout: int = 60,
+        clear_function_on_iteration: bool = False,
     ):
         self._llm = llm
         self._functions = functions
@@ -57,35 +79,41 @@ class Agent(ABC):
         self.__thread_pool = ThreadPoolExecutor(max_function_threads)
         self.__default_function_timeout = default_function_timeout
 
+        self.__clear_function_on_iteration = clear_function_on_iteration
+
         super().__init__()
 
     @abstractmethod
-    def parse_response(self, str) -> Any:
+    def parse_response(self, response: str) -> Any:
         """
         Given a response from the llm, provide any additional parsing required
-        to give it back in the expected form if required.
+        to give it back in the expected form if required. Note that it can be
+        any return type - whatever your agent is expected to produce on a call.
+
+        This is called after the LLM generates a response, but does not need
+        any additional processing (such as from functions).
         """
         pass
 
     @abstractmethod
     def add_function_output_to_prompt(
-        self, prompt: str, function_output: Dict[str, Any]
-    ) -> Union[str, Dict[str, str]]:
+        self, prompt: Prompt, function_output: FunctionCalls
+    ) -> Prompt:
         """
-        Given a prompt and the resulting outputs of a function
-        call (in the format of a dict, where the key is the
-        name of the function and the return is whatever one
-        would expect from the function), add the function's
-        results back into the prompt.
+        Given the *original* prompt and the resulting outputs of all function
+        call results, add the function's results back into the prompt.
 
-        How this is done is up to the implementing class. It
-        can be incorporated directly into a prompt via
-        templating or some other manner.
+        How this is done is up to the implementing class. It can be
+        incorporated directly into a prompt via templating or some other
+        manner.
+
+        The return is a new prompt with the function call data implemented,
+        allowing the agent to continue work on the original request.
         """
         pass
 
     def call_functions(
-        self, function_calls: Dict[str, Dict[str, Any]]
+        self, function_calls: Dict[str, FunctionArguments]
     ) -> Dict[str, Any]:
         """
         Given a dict of function calls, call each function and return a dict of
@@ -118,11 +146,11 @@ class Agent(ABC):
 
     def __call__(
         self,
-        prompt: Union[str, dict],
+        prompt: Prompt,
         max_tokens: int = 512,
         temperature: Optional[float] = None,
         max_depth: Optional[int] = None,
-        function_outputs: List[Tuple[str, Dict[str, Any], Any]] = [],
+        function_calls: FunctionCalls = [],
     ) -> Any:
         """
         Respond triggers the incoming prompt.
@@ -139,40 +167,66 @@ class Agent(ABC):
         functions. If function calls are within the generated response (however
         that may be handled), then we will call each function, compile the
         generated output for each function, and then call the LLM again with
-        the `function_outputs` populated. The `function_outputs` is a list of
+        the `function_calls` populated. The `function_calls` is a list of
         function outputs in Tuple form. Each Tuple is of the format str (the
         function name), the parameters passed to that function, and the
         resulting output of that function, whatever it may be. If the max depth
         is surpassed doing this cycle, we will raise a MaxDepthError.
 
+        When function_calls is populated, add_function_output_to_prompt is
+        called to add the function outputs into the prompt in whatever manner
+        is deemed best by the implementing class.
+
         This is then passed to the agent in some manner based on what the agent
-        expects.
+        expects. If the setting clear_function_on_iteration is set to True,
+        then the function_calls will be cleared between each call of the agent;
+        otherwise each consecutive call will still be passed all of the
+        function outputs from the prior calls.
 
         This function is recursively called until no more function calls are
-        requested, and the resulting output is passed back.
+        requested, and the resulting output is passed into parse_response.  The
+        output of this function is finally returned as the result.
         """
         if max_depth is not None and max_depth <= 0:
             raise MaxDepthError(max_depth)
 
-        response, function_calls = self._llm.generate(
-            prompt, max_tokens, temperature, self._functions, function_outputs
-        )
-        print("!!!", response, function_calls)
-
-        if function_calls is None or len(function_calls) == 0:
-            return self.parse_response(response)
-        else:
-            function_results = self.call_functions(function_calls)
-
-            new_prompt = self._llm.add_function_output_to_prompt(
-                response, function_results
+        if len(function_calls) > 0:
+            expanded_prompt = self.add_function_output_to_prompt(
+                prompt, function_calls
             )
 
-            return self.respond(
-                new_prompt,
+            response, function_arguments = self._llm.generate(
+                expanded_prompt, max_tokens, temperature, self._functions
+            )
+        else:
+            response, function_arguments = self._llm.generate(
+                prompt, max_tokens, temperature, self._functions
+            )
+
+        if function_arguments is None or len(function_arguments) == 0:
+            return self.parse_response(response)
+        else:
+            function_results = self.call_functions(function_arguments)
+
+            # Get our function results into the proper format
+            new_function_calls = []
+            for function_name, result in function_results.items():
+                function_args = function_arguments[function_name]
+                new_function_calls.append(
+                    (function_name, function_args, result)
+                )
+
+            if self.__clear_function_on_iteration:
+                function_calls = new_function_calls
+            else:
+                function_calls += new_function_calls
+
+            return self(
+                prompt,
                 max_tokens,
                 temperature,
                 max_depth - 1 if max_depth else None,
+                function_calls,
             )
 
 
