@@ -144,7 +144,7 @@ class Agent(ABC):
 
         return results
 
-    def __call__(
+    def llm_call(
         self,
         prompt: Prompt,
         max_tokens: int = 512,
@@ -153,6 +153,8 @@ class Agent(ABC):
         function_calls: FunctionCalls = [],
     ) -> Any:
         """
+        llm_call handles the calling of the internal LLM.
+
         Respond triggers the incoming prompt.
 
         We assume that the prompt variable is a set of dicts and, if it's a
@@ -221,13 +223,22 @@ class Agent(ABC):
             else:
                 function_calls += new_function_calls
 
-            return self(
+            return self.llm_call(
                 prompt,
                 max_tokens,
                 temperature,
                 max_depth - 1 if max_depth else None,
                 function_calls,
             )
+
+    @abstractmethod
+    def __call__() -> Any:
+        """
+        __call__ is the main entry point for the agent. It should handle the
+        calling of the LLM, the parsing of the response, and any other
+        necessary steps to return the output in the expected format.
+        """
+        pass
 
 
 class SequentialAgent(ABC):
@@ -247,13 +258,19 @@ class SequentialAgent(ABC):
     @abstractmethod
     def parse_response(
         self, index: int, response: Any
-    ) -> Tuple[Union[str, dict], Dict[str, Dict[str, Any]]]:
+    ) -> Tuple[Prompt, Dict[str, Dict[str, Any]]]:
         """
         parse_response will take the response from the agent at the given index
         and expects to be parsed and prepared for the next agent. It should
         return the response and any function calls that need to be made in the
         next agent.
         """
+        pass
+
+    @abstractmethod
+    def parse_intermediate_response(
+        self, index: int, response: Any
+    ) -> Tuple[Union[str, dict], Dict[str, Dict[str, Any]]]:
         pass
 
     def __call__(
