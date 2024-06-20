@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from llms.tools import Function
+from agents.tools import Function
 
 # A RolePrompt is a dict specifying a role, and a string specifying the
 # content. An example of this would be:
