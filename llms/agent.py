@@ -237,6 +237,9 @@ class Agent(ABC):
         __call__ is the main entry point for the agent. It should handle the
         calling of the LLM, the parsing of the response, and any other
         necessary steps to return the output in the expected format.
+
+        We expect the agent to, at some point, call llm_call from the resulting
+        input to utilize the agent function utilization and LLM management.
         """
         pass
 
