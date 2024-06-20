@@ -3,9 +3,10 @@ from typing import Any, Dict, List, Optional, Union
 
 import openai
 
-from llms.agent import LLM, Agent, FunctionCalls
-from llms.openai import OpenAIGPT
-from llms.tools import Argument, Function
+from agents.agent import LLM, Agent, FunctionCalls
+from agents.llms.openai import OpenAIGPT
+from agents.templater import PromptTemplate
+from agents.tools import Argument, Function
 
 gpt = OpenAIGPT()
 
