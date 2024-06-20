@@ -36,7 +36,7 @@ class PromptTemplate:
                     and input[current] != self.template_delimiters[1]
                 ):
                     current += 1
-                variables.append(input[start + 1 : current].strip())
+                variables.append(input[start + 1 : current])
             current += 1
 
         return variables
